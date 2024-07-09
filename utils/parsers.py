@@ -54,49 +54,49 @@ async def parsed_messages_generator(
         messages: list[Message | MessageService] = history.messages
         yield messages
 
-        offset_msg = messages[len(messages)].id
+        offset_msg = messages[-1].id
 
 
 def order_dict_reactions(
-        top_messages_by_thread_id: dict[int, Message],
-        thread_id: int,
+        top_messages_by_topic_id: dict[int, Message],
+        topic_id: int,
         message: Message,
         top_size: int = 3
     ) -> None:
     """
-    Modifies the `top_messages_by_thread_id` dictionary by adding a new message and sorting it based on reactions.
+    Modifies the `top_messages_by_topic_id` dictionary by adding a new message and sorting it based on reactions.
 
     Parameters:
-    - top_messages_by_thread_id (dict[int, Message]): A dictionary where the keys are thread IDs and the values are lists of messages.
-    - thread_id (int): The ID of the thread to which the message belongs.
-    - message (Message): The message to be added to the thread.
-    - top_size (int, optional): The maximum number of messages to keep in each thread. Default is 3.
+    - top_messages_by_topic_id (dict[int, Message]): A dictionary where the keys are topic IDs and the values are lists of messages.
+    - topic_id (int): The ID of the topic to which the message belongs.
+    - message (Message): The message to be added to the topic.
+    - top_size (int, optional): The maximum number of messages to keep in each topic. Default is 3.
 
     Returns:
     None
 
     Side Effects:
-    - Modifies the `top_messages_by_thread_id` dictionary by adding the new message and sorting it based on reactions.
-    - If the number of messages in the thread exceeds the specified top size, the less reacted message is removed.
+    - Modifies the `top_messages_by_topic_id` dictionary by adding the new message and sorting it based on reactions.
+    - If the number of messages in the topic exceeds the specified top size, the less reacted message is removed.
     """
-    if thread_id in top_messages_by_thread_id:
-        top_messages_by_thread_id[thread_id].append(message)
-        top_messages_by_thread_id[thread_id] = sorted(top_messages_by_thread_id[thread_id], key=lambda m: sum(r.count for r in m.reactions.results), reverse=True)  # FIXME
+    if topic_id in top_messages_by_topic_id:
+        top_messages_by_topic_id[topic_id].append(message)
+        top_messages_by_topic_id[topic_id] = sorted(top_messages_by_topic_id[topic_id], key=lambda m: sum(r.count for r in m.reactions.results), reverse=True)
 
-        if len(top_messages_by_thread_id[thread_id]) > top_size:
-            del top_messages_by_thread_id[thread_id][-1]
+        if len(top_messages_by_topic_id[topic_id]) > top_size:
+            del top_messages_by_topic_id[topic_id][-1]
 
     else:
-        top_messages_by_thread_id[thread_id] = [message]
+        top_messages_by_topic_id[topic_id] = [message]
 
 
 async def get_top_messages(
         client: TelegramClient,
         channel: EntitiesLike,
         top_size: int = 5
-    ) -> dict[str, list[Message]]:
+    ) -> dict[tuple, list[Message]]:
     """
-    Returns a dictionary of top reacted messages in each thread.
+    Returns a dictionary of top reacted messages in each topic.
 
     Parameters:
     - client (TelegramClient): The Telegram client instance for making API calls.
@@ -104,26 +104,26 @@ async def get_top_messages(
     - top_size (int): How many messages will be in top.
 
     Returns:
-    - dict[str, list[Message]]: A dictionary where the keys are thread names and the values are lists of top messages in each thread.
+    - dict[dict, list[Message]]: A dictionary where the keys are topic names and the values are lists of top messages in each topic.
 
     Return format:
     ```
     {
-        "thread_name": [Message, Message, ..., Message],
-        "thread_name": [Message, Message, ..., Message]
+        (thread_id, thread_name): [Message, Message, ..., Message],
+        (thread_id, thread_name): [Message, Message, ..., Message]
     }
     ```
 
     Note:
     - This function fetches messages using the parsed_messages_generator function.
-    - It identifies threads by checking the reply_to attribute of messages.
+    - It identifies topics by checking the reply_to attribute of messages.
     - It uses the order_dict_reactions function to order messages by reactions.
-    - It populates thread_name_ids dictionary with thread IDs and names.
-    - It populates top_messages_by_thread_id dictionary with thread IDs and top messages.
-    - It returns a dictionary with thread names and their corresponding top messages.
-    """
-    thread_name_ids: dict[int, str] = dict()
-    top_messages_by_thread_id: dict[int, Message] = dict()
+    - It populates topic_name_ids dictionary with topic IDs and names.
+    - It populates top_messages_by_topic_id dictionary with topic IDs and top messages.
+    - It returns a dictionary with topic names and their corresponding top messages.
+    """ # TODO: rewrite this?
+    topic_name_ids: dict[int, str] = dict()
+    top_messages_by_topic_id: dict[int, dict[Message]] = dict()
 
     messages: ChannelMessages
     async for messages in parsed_messages_generator(client, channel):
@@ -131,17 +131,17 @@ async def get_top_messages(
         message: Message | MessageService
         for message in messages:
             if isinstance(message, Message) and message.reply_to and message.reply_to.forum_topic and message.reactions:
-                # thread id contains in reply_to_top_id if there's reply to someone's message, else in reply_to_msg_id
-                thread_id = message.reply_to.reply_to_top_id if message.reply_to.reply_to_top_id else message.reply_to.reply_to_msg_id
+                # topic id contains in reply_to_top_id if there's reply to someone's message, else in reply_to_msg_id
+                topic_id = message.reply_to.reply_to_top_id if message.reply_to.reply_to_top_id else message.reply_to.reply_to_msg_id
 
-                order_dict_reactions(top_messages_by_thread_id, thread_id, message, top_size)
+                order_dict_reactions(top_messages_by_topic_id, topic_id, message, top_size)
 
 
             if isinstance(message, MessageService) and isinstance(message.action, MessageActionTopicCreate):
-                thread_name_ids[message.id] = message.action.title
+                topic_name_ids[message.id] = message.action.title
 
-        top_messages_by_thread_name: dict[str, list[Message]] = dict()
-        for thread_id, messages in top_messages_by_thread_id.items():
-            top_messages_by_thread_name[thread_name_ids[thread_id]] = messages
+    top_messages_by_topic: dict[tuple, list[Message]] = dict()
+    for topic_id, messages in top_messages_by_topic_id.items():
+        top_messages_by_topic[(topic_id, topic_name_ids[topic_id])] = messages
 
-        return top_messages_by_thread_name
+    return top_messages_by_topic
