@@ -58,20 +58,37 @@ async def parsed_messages_generator(
 
 
 def order_dict_reactions(
-        top_messages_by_topic_id: dict[int, Message],
+        top_messages_by_topic_id: dict[int, dict[Message | list[Message]]],
         topic_id: int,
         message: Message,
-        top_size: int = 3
+        top_size: int = 5
     ) -> None:
-    if topic_id in top_messages_by_topic_id:
-        message_added = False
+    """
+    This function orders and updates a dictionary of messages based on their reactions.
+    If a message with the same number of reactions already exists in the dictionary,
+    it appends the new message to the existing one. If not, it adds the new message to the dictionary.
+    The dictionary is sorted based on the number of reactions in descending order.
+    If the number of messages for a specific topic exceeds the specified top_size,
+    the oldest message is removed.
 
-        old_messages: list[Message]
+    Parameters:
+    - top_messages_by_topic_id (dict[int, dict[Message | list[Message]]]): A dictionary containing messages organized by topic ID.
+    - topic_id (int): The ID of the topic for which the message is being processed.
+    - message (Message): The message to be added or updated in the dictionary.
+    - top_size (int, optional): The maximum number of messages to keep for each topic. Default is 5.
+
+    Returns:
+    - None: The function modifies the input dictionary in-place.
+    """
+    if topic_id in top_messages_by_topic_id:
+        message_added: bool = False
+
+        old_messages: list[Message | list[Message]]
         for old_index, old_messages in enumerate(top_messages_by_topic_id[topic_id]):
             if isinstance(old_messages, list):
-                old_message = old_messages[0]
+                old_message: Message = old_messages[0]
             else:
-                old_message = old_messages
+                old_message: Message = old_messages
 
             if sum(r.count for r in old_message.reactions.results) == sum(r.count for r in message.reactions.results):
                 if isinstance(old_messages, Message):
@@ -100,9 +117,26 @@ async def get_top_messages(
         client: TelegramClient,
         channel: EntitiesLike,
         top_size: int = 5
-    ) -> dict[tuple, list[Message]]:
+    ) -> dict[tuple[int, str], list[Message | list[Message]]]:
+    """
+    This function fetches and analyzes messages from a specified Telegram channel,
+    identifying the top messages based on the number of reactions.
+
+    Parameters:
+    - client (TelegramClient): An instance of the TelegramClient class from the Telethon library, used for making API calls.
+    - channel (EntitiesLike): The Telegram channel entity (username, ID, etc.) from which to fetch messages.
+    - top_size (int, optional): The number of top messages to fetch for each topic. Default is 5.
+
+    Returns:
+    - dict[tuple[int, str], list[Message | list[Message]]]: A dictionary containing the top messages for each topic.
+    The keys are tuples of (topic_id, topic_name), and the values are lists of messages or lists of messages lists (if there's more than one message at one place).
+
+    Note:
+    - The function fetches messages in batches using the parsed_messages_generator function.
+    - It identifies the top messages based on the number of reactions using the order_dict_reactions function.
+    """
     topic_name_ids: dict[int, str] = dict()
-    top_messages_by_topic_id: dict[int, dict[Message]] = dict()
+    top_messages_by_topic_id: dict[int, dict[Message | list[Message]]] = dict()
 
     messages: ChannelMessages
     async for messages in parsed_messages_generator(client, channel):
@@ -115,11 +149,10 @@ async def get_top_messages(
 
                 order_dict_reactions(top_messages_by_topic_id, topic_id, message, top_size)
 
-
             if isinstance(message, MessageService) and isinstance(message.action, MessageActionTopicCreate):
                 topic_name_ids[message.id] = message.action.title
 
-    top_messages_by_topic: dict[tuple, list[Message]] = dict()
+    top_messages_by_topic: dict[tuple[int, str], list[Message | list[Message]]] = dict()
     for topic_id, messages in top_messages_by_topic_id.items():
         top_messages_by_topic[(topic_id, topic_name_ids[topic_id])] = messages
 
