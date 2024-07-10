@@ -63,28 +63,34 @@ def order_dict_reactions(
         message: Message,
         top_size: int = 3
     ) -> None:
-    """
-    Modifies the `top_messages_by_topic_id` dictionary by adding a new message and sorting it based on reactions.
-
-    Parameters:
-    - top_messages_by_topic_id (dict[int, Message]): A dictionary where the keys are topic IDs and the values are lists of messages.
-    - topic_id (int): The ID of the topic to which the message belongs.
-    - message (Message): The message to be added to the topic.
-    - top_size (int, optional): The maximum number of messages to keep in each topic. Default is 3.
-
-    Returns:
-    None
-
-    Side Effects:
-    - Modifies the `top_messages_by_topic_id` dictionary by adding the new message and sorting it based on reactions.
-    - If the number of messages in the topic exceeds the specified top size, the less reacted message is removed.
-    """
     if topic_id in top_messages_by_topic_id:
-        top_messages_by_topic_id[topic_id].append(message)
-        top_messages_by_topic_id[topic_id] = sorted(top_messages_by_topic_id[topic_id], key=lambda m: sum(r.count for r in m.reactions.results), reverse=True)
+        message_added = False
 
-        if len(top_messages_by_topic_id[topic_id]) > top_size:
-            del top_messages_by_topic_id[topic_id][-1]
+        old_messages: list[Message]
+        for old_index, old_messages in enumerate(top_messages_by_topic_id[topic_id]):
+            if isinstance(old_messages, list):
+                old_message = old_messages[0]
+            else:
+                old_message = old_messages
+
+            if sum(r.count for r in old_message.reactions.results) == sum(r.count for r in message.reactions.results):
+                if isinstance(old_messages, Message):
+                    top_messages_by_topic_id[topic_id][old_index] = [old_messages]
+
+                top_messages_by_topic_id[topic_id][old_index].append(message)
+                message_added = True
+                break
+
+        if not message_added:
+            top_messages_by_topic_id[topic_id].append(message)
+            top_messages_by_topic_id[topic_id] = sorted(
+                top_messages_by_topic_id[topic_id],
+                key=lambda m: sum(r.count for r in m.reactions.results) if isinstance(m, Message) else sum(r.count for r in m[0].reactions.results),
+                reverse=True
+            )
+
+            if len(top_messages_by_topic_id[topic_id]) > top_size:
+                del top_messages_by_topic_id[topic_id][-1]
 
     else:
         top_messages_by_topic_id[topic_id] = [message]
@@ -95,33 +101,6 @@ async def get_top_messages(
         channel: EntitiesLike,
         top_size: int = 5
     ) -> dict[tuple, list[Message]]:
-    """
-    Returns a dictionary of top reacted messages in each topic.
-
-    Parameters:
-    - client (TelegramClient): The Telegram client instance for making API calls.
-    - channel (EntitiesLike): The channel entity (username, ID, etc.) from which to fetch messages.
-    - top_size (int): How many messages will be in top.
-
-    Returns:
-    - dict[dict, list[Message]]: A dictionary where the keys are topic names and the values are lists of top messages in each topic.
-
-    Return format:
-    ```
-    {
-        (thread_id, thread_name): [Message, Message, ..., Message],
-        (thread_id, thread_name): [Message, Message, ..., Message]
-    }
-    ```
-
-    Note:
-    - This function fetches messages using the parsed_messages_generator function.
-    - It identifies topics by checking the reply_to attribute of messages.
-    - It uses the order_dict_reactions function to order messages by reactions.
-    - It populates topic_name_ids dictionary with topic IDs and names.
-    - It populates top_messages_by_topic_id dictionary with topic IDs and top messages.
-    - It returns a dictionary with topic names and their corresponding top messages.
-    """ # TODO: rewrite this?
     topic_name_ids: dict[int, str] = dict()
     top_messages_by_topic_id: dict[int, dict[Message]] = dict()
 

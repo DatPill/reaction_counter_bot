@@ -1,7 +1,7 @@
 import ast
-from dotenv import dotenv_values
 from typing import Final
 
+from dotenv import dotenv_values
 
 config = dotenv_values()
 
