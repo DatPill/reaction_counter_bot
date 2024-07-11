@@ -1,4 +1,6 @@
 import logging
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.job import Job
 
 from telethon import events
 from telethon.sync import TelegramClient
@@ -7,11 +9,17 @@ from telethon.tl.types import User
 
 from data.config import API_HASH, API_ID, SESSION, ADMINS
 from utils.parsers import get_top_messages
+from utils.scheduler import add_chat_timer
 
+
+# Set up Telegram client
 logging.basicConfig(level=logging.DEBUG)
 client: TelegramClient = TelegramClient(SESSION, API_ID, API_HASH)
 client.parse_mode = 'html'
 
+# Set up scheduler
+scheduler = AsyncIOScheduler(timezone='Europe/Moscow')
+channel_timers: dict[int, Job] = {}
 
 @client.on(events.NewMessage(pattern=r'!parse (\w+)?', chats=ADMINS))
 async def parse_cmd_handler(event: events.NewMessage):
@@ -106,8 +114,97 @@ async def total_cmd_handler(event: events.NewMessage):
 
         await client.send_message(chat_id, message=answer, reply_to=topic[0])
 
+
+@client.on(events.NewMessage(pattern=r'!timer_on (\w+)?', chats=ADMINS))
+async def timer_on_cmd_handler(event: events.NewMessage):
+    """Examples:
+
+    - `!timer_on @chat at 12:00 until 01.01.2027`
+    - `!timer_on @chat every 24h until 31.05.2024`
+    - `!timer_on @chat every 1h 30m`
+    """
+    all_data: list[str] = event.raw_text.split()
+
+    chat_instance: str = all_data[1]
+    if chat_instance[0] == '@' or not chat_instance[1:].isdigit():
+        chat_id: int = (await client.get_entity(chat_instance)).id
+    else:
+        chat_id: int = int(chat_instance[4:])
+
+    timing: str = all_data[2]
+    end_date: str | None = None
+    hours: str | None = None
+    minutes: str | None = None
+
+    if all_data[-2] == 'until' or all_data[-2] == 'untill' or all_data[-2] == 'до':
+        end_date_raw: str = all_data[-1]
+        date_list: list = []
+        for piece in end_date_raw.split('.')[::-1]:
+            date_list.append(piece)
+        if len(date_list[0]) < 4:
+            date_list[0] = '20' + date_list[0]
+        end_date: str = '-'.join(date_list)
+        del all_data[-2:]
+
+    if timing == 'at':
+        trigger: str = 'cron'
+
+        hours: str = all_data[3].split(':')[0]
+        try:
+            minutes: str = all_data[3].split(':')[1]
+        except IndexError:
+            minutes = '00'
+
+    elif timing == 'every':
+        trigger: str = 'interval'
+
+        for interval in all_data[3:]:
+            if interval.endswith('m') or interval.endswith('м') or interval.endswith('мин') or interval.endswith('min'):
+                minutes: str = interval[:-1]
+            elif interval.endswith('h') or interval.endswith('hour') or interval.endswith('ч') or interval.endswith('час'):
+                hours: str = interval[:-1]
+
+            if not hours:
+                hours = '00'
+            if not minutes:
+                minutes = '00'
+
+    job: Job = await add_chat_timer(
+        scheduler=scheduler, client=client,
+        chat_id=chat_id, trigger=trigger,
+        hours=hours, minutes=minutes,
+        end_date=end_date
+    )
+
+    if chat_id in channel_timers:
+        channel_timers[chat_id].remove()
+
+    channel_timers[chat_id] = job
+    await event.reply('Таймер успешно установлен')
+
+
+@client.on(events.NewMessage(pattern=r'!timer_off (\w+)?', chats=ADMINS))
+async def timer_off_cmd_handler(event: events.NewMessage):
+    all_data: list[str] = event.raw_text.split()
+
+    chat_instance: str = all_data[-1]
+    if chat_instance[0] == '@' or not chat_instance[1:].isdigit():
+        chat_id: int = (await client.get_entity(chat_instance)).id
+    else:
+        chat_id: int = int(chat_instance[4:])
+
+    if chat_id in channel_timers:
+        channel_timers[chat_id].remove()
+        del channel_timers[chat_id]
+        await event.reply('Таймер успешно удалён')
+
+    else:
+        await event.reply('Для указанной группы нет таймера')
+
+
 def main():
     client.start()
+    scheduler.start()
     client.run_until_disconnected()
 
 
